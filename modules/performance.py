@@ -1,17 +1,34 @@
 import numpy as np
 
-def annual_performance(series):
+
+def annualized_return(values, dates):
+
+    nb_days = (
+        dates.iloc[-1]
+        - dates.iloc[0]
+    ).days
+
+    if nb_days <= 0:
+        return 0
+
     return (
-        series.iloc[-1] /
-        series.iloc[0]
-        - 1
-    )
+        (
+            values.iloc[-1]
+            /
+            values.iloc[0]
+        ) ** (365 / nb_days)
+    ) - 1
+
 
 def excess_return(
-        pf_return,
-        bm_return):
+        portfolio_return,
+        benchmark_return):
 
-    return pf_return - bm_return
+    return (
+        portfolio_return
+        - benchmark_return
+    )
+
 
 def tracking_error(
         pf_returns,
@@ -22,7 +39,11 @@ def tracking_error(
         - bm_returns
     )
 
-    return diff.std() * np.sqrt(12)
+    return (
+        diff.std()
+        * np.sqrt(12)
+    )
+
 
 def information_ratio(
         excess,
