@@ -3,11 +3,50 @@ import pandas as pd
 import numpy as np
 import plotly.express as px
 import plotly.graph_objects as go
-from datetime import datetime
 
-# =====================================================
-# CONFIGURATION
-# =====================================================
+from modules.performance import (
+    annualized_return,
+    excess_return,
+    tracking_error,
+    information_ratio
+)
+
+from modules.risk import (
+    volatility,
+    sharpe_ratio,
+    sortino_ratio,
+    max_drawdown,
+    historical_var,
+    cvar,
+    parametric_var
+)
+
+from modules.scoring import (
+    calculate_score,
+    get_rating
+)
+
+from modules.alm import (
+    build_alm_table
+)
+
+from modules.attribution import (
+    attribution_summary
+)
+
+from modules.commentary import (
+    build_commentary
+)
+
+from modules.exporters import (
+    export_excel,
+    export_word,
+    export_pdf
+)
+
+# ==================================================
+# CONFIG
+# ==================================================
 
 st.set_page_config(
     page_title="Reporting Obligataire",
@@ -15,486 +54,626 @@ st.set_page_config(
     layout="wide"
 )
 
-# =====================================================
-# TITRE
-# =====================================================
+# ==================================================
+# HEADER
+# ==================================================
 
-st.title("📈 Reporting Portefeuille Obligataire")
+st.title("📈 Reporting Obligataire")
 
-st.markdown("---")
+st.markdown(
+"""
+Application de suivi des performances,
+des risques et de l'allocation d'un
+portefeuille obligataire.
+"""
+)
 
-# =====================================================
+# ==================================================
 # SIDEBAR
-# =====================================================
+# ==================================================
 
 st.sidebar.header("Paramètres")
 
+rf_rate = st.sidebar.number_input(
+    "Taux sans risque %",
+    value=2.5
+) / 100
+
 horizon = st.sidebar.selectbox(
-    "Horizon d'analyse",
+    "Horizon",
     [
         "Depuis origine",
         "YTD",
         "1 An",
-        "3 Ans"
+        "3 Ans",
+        "5 Ans"
     ]
 )
 
-rf_rate = st.sidebar.number_input(
-    "Taux sans risque (%)",
-    value=2.5,
-    step=0.1
-) / 100
-
-# =====================================================
-# IMPORT
-# =====================================================
+# ==================================================
+# UPLOAD
+# ==================================================
 
 uploaded_file = st.file_uploader(
     "Charger le fichier Excel",
     type=["xlsx"]
 )
 
-if uploaded_file:
+if uploaded_file is None:
 
-    # =================================================
-    # LECTURE
-    # =================================================
+    st.info(
+        """
+        Le classeur doit contenir :
 
-    perf = pd.read_excel(
+        - Performance
+        - Portefeuille
+        - Attribution
+        - Courbe_Taux
+        """
+    )
+
+    st.stop()
+
+# ==================================================
+# LECTURE
+# ==================================================
+
+perf = pd.read_excel(
+    uploaded_file,
+    sheet_name="Performance"
+)
+
+portefeuille = pd.read_excel(
+    uploaded_file,
+    sheet_name="Portefeuille"
+)
+
+try:
+
+    attribution_df = pd.read_excel(
         uploaded_file,
-        sheet_name="Performance"
+        sheet_name="Attribution"
     )
 
-    portefeuille = pd.read_excel(
+except:
+
+    attribution_df = None
+
+try:
+
+    courbe_df = pd.read_excel(
         uploaded_file,
-        sheet_name="Portefeuille"
+        sheet_name="Courbe_Taux"
     )
 
-    perf["Date"] = pd.to_datetime(perf["Date"])
+except:
 
-    # =================================================
-    # FILTRE HORIZON
-    # =================================================
+    courbe_df = None
 
-    date_max = perf["Date"].max()
+# ==================================================
+# CONTROLES
+# ==================================================
 
-    if horizon == "YTD":
+required_columns = [
+    "Duration",
+    "Duration_Modifiee",
+    "Poids",
+    "YTM",
+    "Valeur_Marchande",
+    "Notation",
+    "Emetteur",
+    "Secteur",
+    "Maturite"
+]
 
-        start_date = pd.Timestamp(
-            year=date_max.year,
-            month=1,
-            day=1
+missing = [
+    c
+    for c in required_columns
+    if c not in portefeuille.columns
+]
+
+if missing:
+
+    st.error(
+        f"Colonnes manquantes : {missing}"
+    )
+
+    st.stop()
+
+# ==================================================
+# DATES
+# ==================================================
+
+perf["Date"] = pd.to_datetime(
+    perf["Date"]
+)
+
+date_max = perf["Date"].max()
+
+if horizon == "YTD":
+
+    perf = perf[
+        perf["Date"]
+        >= pd.Timestamp(
+            date_max.year,
+            1,
+            1
         )
+    ]
 
-        perf = perf[
-            perf["Date"] >= start_date
-        ]
+elif horizon == "1 An":
 
-    elif horizon == "1 An":
+    perf = perf[
+        perf["Date"]
+        >= date_max -
+        pd.DateOffset(years=1)
+    ]
 
-        perf = perf[
-            perf["Date"] >=
-            date_max - pd.DateOffset(years=1)
-        ]
+elif horizon == "3 Ans":
 
-    elif horizon == "3 Ans":
+    perf = perf[
+        perf["Date"]
+        >= date_max -
+        pd.DateOffset(years=3)
+    ]
 
-        perf = perf[
-            perf["Date"] >=
-            date_max - pd.DateOffset(years=3)
-        ]
+elif horizon == "5 Ans":
 
-    # =================================================
-    # CALCULS
-    # =================================================
+    perf = perf[
+        perf["Date"]
+        >= date_max -
+        pd.DateOffset(years=5)
+    ]
 
-    perf["Return_PF"] = (
-        perf["VL_Portefeuille"]
-        .pct_change()
+# ==================================================
+# RETURNS
+# ==================================================
+
+perf["Return_PF"] = (
+    perf["VL_Portefeuille"]
+    .pct_change()
+)
+
+perf["Return_BM"] = (
+    perf["VL_Benchmark"]
+    .pct_change()
+)
+
+perf.dropna(inplace=True)
+
+# ==================================================
+# PERFORMANCE
+# ==================================================
+
+performance_pf = annualized_return(
+    perf["VL_Portefeuille"],
+    perf["Date"]
+)
+
+performance_bm = annualized_return(
+    perf["VL_Benchmark"],
+    perf["Date"]
+)
+
+excess = excess_return(
+    performance_pf,
+    performance_bm
+)
+
+# ==================================================
+# RISK
+# ==================================================
+
+vol_pf = volatility(
+    perf["Return_PF"]
+)
+
+vol_bm = volatility(
+    perf["Return_BM"]
+)
+
+sharpe = sharpe_ratio(
+    performance_pf,
+    vol_pf,
+    rf_rate
+)
+
+sortino = sortino_ratio(
+    performance_pf,
+    perf["Return_PF"],
+    rf_rate
+)
+
+te = tracking_error(
+    perf["Return_PF"],
+    perf["Return_BM"]
+)
+
+ir = information_ratio(
+    excess,
+    te
+)
+
+mdd = max_drawdown(
+    perf["Return_PF"]
+)
+
+var95 = historical_var(
+    perf["Return_PF"]
+)
+
+cvar95 = cvar(
+    perf["Return_PF"]
+)
+
+param_var95 = parametric_var(
+    perf["Return_PF"]
+)
+
+# ==================================================
+# PORTFOLIO
+# ==================================================
+
+duration = np.average(
+    portefeuille["Duration"],
+    weights=portefeuille["Poids"]
+)
+
+duration_mod = np.average(
+    portefeuille["Duration_Modifiee"],
+    weights=portefeuille["Poids"]
+)
+
+ytm = np.average(
+    portefeuille["YTM"],
+    weights=portefeuille["Poids"]
+)
+
+dv01 = (
+    portefeuille["Valeur_Marchande"]
+    *
+    portefeuille["Duration_Modifiee"]
+    *
+    0.0001
+).sum()
+
+issuer_concentration = (
+    portefeuille
+    .groupby("Emetteur")["Poids"]
+    .sum()
+    .max()
+)
+
+rating_diversification = (
+    portefeuille["Notation"]
+    .nunique()
+)
+
+# ==================================================
+# SCORE
+# ==================================================
+
+metrics = {
+
+    "excess_return": excess,
+    "sharpe": sharpe,
+    "sortino": sortino,
+    "information_ratio": ir,
+    "max_drawdown": mdd,
+    "issuer_concentration": issuer_concentration,
+    "duration_mod": duration_mod,
+    "var95": var95,
+    "rating_diversification":
+        rating_diversification
+}
+
+score = calculate_score(metrics)
+
+rating = get_rating(score)
+
+# ==================================================
+# KPI
+# ==================================================
+
+st.subheader("Tableau de Bord")
+
+c1,c2,c3,c4,c5,c6 = st.columns(6)
+
+c1.metric(
+    "Performance",
+    f"{performance_pf:.2%}"
+)
+
+c2.metric(
+    "Benchmark",
+    f"{performance_bm:.2%}"
+)
+
+c3.metric(
+    "Excess Return",
+    f"{excess:.2%}"
+)
+
+c4.metric(
+    "Duration",
+    f"{duration:.2f}"
+)
+
+c5.metric(
+    "YTM",
+    f"{ytm:.2f}%"
+)
+
+c6.metric(
+    "Score",
+    f"{score}/100"
+)
+
+c1,c2,c3,c4 = st.columns(4)
+
+c1.metric(
+    "VaR 95%",
+    f"{var95:.2%}"
+)
+
+c2.metric(
+    "CVaR 95%",
+    f"{cvar95:.2%}"
+)
+
+c3.metric(
+    "Dur. Modifiée",
+    f"{duration_mod:.2f}"
+)
+
+c4.metric(
+    "DV01",
+    f"{dv01:,.0f}"
+)
+
+# ==================================================
+# PERFORMANCE CHART
+# ==================================================
+
+st.subheader(
+    "Evolution Portefeuille vs Benchmark"
+)
+
+fig = go.Figure()
+
+fig.add_trace(
+    go.Scatter(
+        x=perf["Date"],
+        y=perf["VL_Portefeuille"],
+        name="Portefeuille"
     )
+)
 
-    perf["Return_BM"] = (
-        perf["VL_Benchmark"]
-        .pct_change()
+fig.add_trace(
+    go.Scatter(
+        x=perf["Date"],
+        y=perf["VL_Benchmark"],
+        name="Benchmark"
     )
+)
 
-    perf = perf.dropna()
+st.plotly_chart(
+    fig,
+    use_container_width=True
+)
 
-    annual_return_pf = (
-        perf["VL_Portefeuille"].iloc[-1]
-        /
-        perf["VL_Portefeuille"].iloc[0]
-        - 1
-    )
+# ==================================================
+# ALLOCATION
+# ==================================================
 
-    annual_return_bm = (
-        perf["VL_Benchmark"].iloc[-1]
-        /
-        perf["VL_Benchmark"].iloc[0]
-        - 1
-    )
+col1,col2,col3 = st.columns(3)
 
-    excess_return = (
-        annual_return_pf
-        - annual_return_bm
-    )
-
-    volatility_pf = (
-        perf["Return_PF"].std()
-        * np.sqrt(12)
-    )
-
-    volatility_bm = (
-        perf["Return_BM"].std()
-        * np.sqrt(12)
-    )
-
-    sharpe = (
-        (annual_return_pf - rf_rate)
-        / volatility_pf
-        if volatility_pf > 0
-        else 0
-    )
-
-    downside = perf[
-        perf["Return_PF"] < 0
-    ]["Return_PF"]
-
-    downside_std = (
-        downside.std()
-        * np.sqrt(12)
-    )
-
-    sortino = (
-        (annual_return_pf - rf_rate)
-        / downside_std
-        if downside_std > 0
-        else 0
-    )
-
-    tracking_error = (
-        (perf["Return_PF"]
-         - perf["Return_BM"])
-         .std()
-         * np.sqrt(12)
-    )
-
-    information_ratio = (
-        excess_return
-        / tracking_error
-        if tracking_error > 0
-        else 0
-    )
-
-    cumulative = (
-        1 + perf["Return_PF"]
-    ).cumprod()
-
-    rolling_max = cumulative.cummax()
-
-    drawdown = (
-        cumulative
-        /
-        rolling_max
-        - 1
-    )
-
-    max_drawdown = drawdown.min()
-
-    # =================================================
-    # PORTFOLIO METRICS
-    # =================================================
-
-    duration = np.average(
-        portefeuille["Duration"],
-        weights=portefeuille["Poids"]
-    )
-
-    ytm = np.average(
-        portefeuille["YTM"],
-        weights=portefeuille["Poids"]
-    )
-
-    rating_diversification = (
-        portefeuille["Notation"]
-        .nunique()
-    )
-
-    issuer_concentration = (
-        portefeuille.groupby(
-            "Emetteur"
-        )["Poids"]
-        .sum()
-        .max()
-    )
-
-    # =================================================
-    # SCORE
-    # =================================================
-
-    score = 0
-
-    if excess_return > 0:
-        score += 25
-
-    if sharpe > 1:
-        score += 15
-
-    if sortino > 1:
-        score += 15
-
-    if information_ratio > 0.50:
-        score += 15
-
-    if max_drawdown > -0.05:
-        score += 15
-
-    if issuer_concentration < 15:
-        score += 15
-
-    score = min(score,100)
-
-    if score >= 85:
-        rating = "🟢 Excellent"
-
-    elif score >= 70:
-        rating = "🟢 Bon"
-
-    elif score >= 55:
-        rating = "🟡 Correct"
-
-    elif score >= 40:
-        rating = "🟠 Moyen"
-
-    else:
-        rating = "🔴 Faible"
-
-    # =================================================
-    # KPIs
-    # =================================================
-
-    col1,col2,col3,col4,col5,col6 = st.columns(6)
-
-    col1.metric(
-        "Performance",
-        f"{annual_return_pf:.2%}"
-    )
-
-    col2.metric(
-        "Benchmark",
-        f"{annual_return_bm:.2%}"
-    )
-
-    col3.metric(
-        "Excess Return",
-        f"{excess_return:.2%}"
-    )
-
-    col4.metric(
-        "Duration",
-        f"{duration:.2f}"
-    )
-
-    col5.metric(
-        "YTM",
-        f"{ytm:.2f}%"
-    )
-
-    col6.metric(
-        "Score",
-        f"{score}/100"
-    )
-
-    st.success(
-        f"Appréciation : {rating}"
-    )
-
-    # =================================================
-    # EVOLUTION DES VL
-    # =================================================
-
-    st.subheader(
-        "Evolution Portefeuille vs Benchmark"
-    )
-
-    fig = go.Figure()
-
-    fig.add_trace(
-        go.Scatter(
-            x=perf["Date"],
-            y=perf["VL_Portefeuille"],
-            name="Portefeuille"
-        )
-    )
-
-    fig.add_trace(
-        go.Scatter(
-            x=perf["Date"],
-            y=perf["VL_Benchmark"],
-            name="Benchmark"
-        )
-    )
+with col1:
 
     st.plotly_chart(
-        fig,
-        use_container_width=True
-    )
-
-    # =================================================
-    # NOTATION
-    # =================================================
-
-    col1,col2 = st.columns(2)
-
-    with col1:
-
-        fig_rating = px.pie(
+        px.pie(
             portefeuille,
             names="Notation",
             values="Poids",
-            title="Répartition par notation"
-        )
-
-        st.plotly_chart(
-            fig_rating,
-            use_container_width=True
-        )
-
-    with col2:
-
-        fig_maturity = px.histogram(
-            portefeuille,
-            x="Maturite",
-            y="Poids",
-            title="Répartition des maturités"
-        )
-
-        st.plotly_chart(
-            fig_maturity,
-            use_container_width=True
-        )
-
-    # =================================================
-    # TOP EMETTEURS
-    # =================================================
-
-    st.subheader(
-        "Top Expositions"
-    )
-
-    top_issuers = (
-        portefeuille
-        .groupby("Emetteur")
-        ["Poids"]
-        .sum()
-        .sort_values(
-            ascending=False
-        )
-        .head(10)
-    )
-
-    st.dataframe(
-        top_issuers
-    )
-
-    # =================================================
-    # RISQUE
-    # =================================================
-
-    st.subheader(
-        "Analyse Risque"
-    )
-
-    risque_df = pd.DataFrame({
-
-        "Indicateur":[
-            "Volatilité",
-            "Tracking Error",
-            "Sharpe",
-            "Sortino",
-            "Max Drawdown"
-        ],
-
-        "Valeur":[
-            round(volatility_pf,4),
-            round(tracking_error,4),
-            round(sharpe,2),
-            round(sortino,2),
-            round(max_drawdown,4)
-        ]
-    })
-
-    st.dataframe(
-        risque_df,
+            title="Notation"
+        ),
         use_container_width=True
     )
 
-    # =================================================
-    # COMMENTAIRE AUTO
-    # =================================================
+with col2:
 
-    st.subheader(
-        "Commentaire de Gestion"
+    st.plotly_chart(
+        px.pie(
+            portefeuille,
+            names="Secteur",
+            values="Poids",
+            title="Secteurs"
+        ),
+        use_container_width=True
     )
 
-    commentaire = f"""
-Le portefeuille affiche une performance de {annual_return_pf:.2%},
-contre {annual_return_bm:.2%} pour son indice de référence,
-soit un écart de performance de {excess_return:.2%}.
+with col3:
 
-Le rendement actuariel moyen du portefeuille ressort à {ytm:.2f}%
-pour une duration moyenne de {duration:.2f} années.
+    st.plotly_chart(
+        px.histogram(
+            portefeuille,
+            x="Maturite",
+            y="Poids",
+            title="Maturités"
+        ),
+        use_container_width=True
+    )
 
-Du point de vue du risque, la volatilité annualisée atteint
-{volatility_pf:.2%}, tandis que le ratio de Sharpe s'établit à
-{sharpe:.2f}. Le ratio de Sortino ressort à {sortino:.2f},
-témoignant du niveau de rémunération du risque baissier.
+# ==================================================
+# ALM
+# ==================================================
 
-Le drawdown maximal observé sur la période atteint
-{max_drawdown:.2%}.
+st.subheader(
+    "Analyse ALM"
+)
 
-L'analyse globale conduit à une notation {rating},
-avec un score de {score}/100.
-"""
+alm_table = build_alm_table(
+    portefeuille
+)
 
-    st.write(commentaire)
+st.dataframe(
+    alm_table,
+    use_container_width=True
+)
 
-    # =================================================
-    # EXPORT
-    # =================================================
+# ==================================================
+# ATTRIBUTION
+# ==================================================
 
-    synthese = pd.DataFrame({
-        "Indicateur":[
-            "Performance",
-            "Benchmark",
-            "Excess Return",
-            "Volatilité",
-            "Sharpe",
-            "Sortino",
-            "Duration",
-            "YTM",
-            "Score"
+if attribution_df is not None:
+
+    st.subheader(
+        "Attribution Performance"
+    )
+
+    attr = attribution_summary(
+        attribution_df
+    )
+
+    attr_df = pd.DataFrame({
+
+        "Source":[
+            "Portage",
+            "Taux",
+            "Crédit"
         ],
-        "Valeur":[
-            annual_return_pf,
-            annual_return_bm,
-            excess_return,
-            volatility_pf,
-            sharpe,
-            sortino,
-            duration,
-            ytm,
-            score
+
+        "Contribution":[
+            attr["Portage"],
+            attr["Taux"],
+            attr["Credit"]
         ]
     })
 
-    csv = synthese.to_csv(
-        index=False
-    ).encode("utf-8")
+    st.plotly_chart(
+        px.pie(
+            attr_df,
+            names="Source",
+            values="Contribution"
+        ),
+        use_container_width=True
+    )
+
+# ==================================================
+# COURBE TAUX
+# ==================================================
+
+if courbe_df is not None:
+
+    st.subheader(
+        "Courbe des Taux"
+    )
+
+    st.plotly_chart(
+        px.line(
+            courbe_df,
+            x="Maturite",
+            y="Taux",
+            markers=True
+        ),
+        use_container_width=True
+    )
+
+# ==================================================
+# COMMENTAIRE
+# ==================================================
+
+comment_metrics = {
+
+    "performance": performance_pf,
+    "benchmark": performance_bm,
+    "excess_return": excess,
+    "ytm": ytm,
+    "duration_mod": duration_mod,
+    "sharpe": sharpe,
+    "sortino": sortino,
+    "var95": var95,
+    "cvar95": cvar95,
+    "score": score,
+    "rating": rating
+}
+
+commentaire = build_commentary(
+    comment_metrics
+)
+
+st.subheader(
+    "Commentaire de Gestion"
+)
+
+st.write(commentaire)
+
+# ==================================================
+# EXPORTS
+# ==================================================
+
+synthese = pd.DataFrame({
+
+    "Indicateur":[
+        "Performance",
+        "Benchmark",
+        "Excess Return",
+        "Sharpe",
+        "Sortino",
+        "VaR95",
+        "CVaR95",
+        "Duration",
+        "Duration Modifiée",
+        "DV01",
+        "Score"
+    ],
+
+    "Valeur":[
+        performance_pf,
+        performance_bm,
+        excess,
+        sharpe,
+        sortino,
+        var95,
+        cvar95,
+        duration,
+        duration_mod,
+        dv01,
+        score
+    ]
+})
+
+st.subheader("Exports")
+
+col1,col2,col3 = st.columns(3)
+
+with col1:
 
     st.download_button(
-        "📥 Télécharger la synthèse",
-        csv,
-        file_name="Reporting_Obligataire.csv",
-        mime="text/csv"
+        "📊 Export Excel",
+        export_excel(
+            synthese,
+            portefeuille
+        ),
+        "Reporting.xlsx"
+    )
+
+with col2:
+
+    st.download_button(
+        "📝 Export Word",
+        export_word(
+            commentaire
+        ),
+        "Reporting.docx"
+    )
+
+with col3:
+
+    st.download_button(
+        "📄 Export PDF",
+        export_pdf(
+            commentaire
+        ),
+        "Reporting.pdf"
     )
