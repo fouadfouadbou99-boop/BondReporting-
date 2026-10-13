@@ -1,9 +1,9 @@
-def score_obligataire(metrics):
+def calculate_score(metrics):
 
     score = 0
 
-    if metrics["excess"] > 0:
-        score += 20
+    if metrics["excess_return"] > 0:
+        score += 15
 
     if metrics["sharpe"] > 1:
         score += 10
@@ -11,39 +11,39 @@ def score_obligataire(metrics):
     if metrics["sortino"] > 1:
         score += 10
 
-    if metrics["ir"] > 0.5:
+    if metrics["information_ratio"] > 0.5:
         score += 10
 
-    if metrics["drawdown"] > -0.05:
+    if metrics["max_drawdown"] > -0.05:
         score += 10
 
-    if metrics["volatility_pf"] <
-       metrics["volatility_bm"]:
+    if metrics["issuer_concentration"] < 15:
         score += 10
 
-    if metrics["duration"] < 8:
+    if metrics["duration_mod"] < 8:
         score += 10
 
-    if metrics["dv01"] > 0:
+    if metrics["var95"] > -0.02:
         score += 10
 
-    if metrics["var95"] > -0.03:
+    if metrics["rating_diversification"] >= 4:
         score += 10
 
-    return min(score,100)
+    return min(score, 100)
 
-def rating(score):
+
+def get_rating(score):
 
     if score >= 85:
         return "🟢 Excellent"
 
-    if score >= 70:
+    elif score >= 70:
         return "🟢 Bon"
 
-    if score >= 55:
+    elif score >= 55:
         return "🟡 Correct"
 
-    if score >= 40:
+    elif score >= 40:
         return "🟠 Moyen"
 
     return "🔴 Faible"
