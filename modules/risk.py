@@ -1,4 +1,6 @@
 import numpy as np
+from scipy.stats import norm
+
 
 def volatility(returns):
 
@@ -7,22 +9,24 @@ def volatility(returns):
         * np.sqrt(12)
     )
 
-def sharpe(
-        return_pf,
-        vol,
-        rf=0.02):
 
-    if vol == 0:
+def sharpe_ratio(
+        performance,
+        volatility_value,
+        rf):
+
+    if volatility_value <= 0:
         return 0
 
     return (
-        return_pf - rf
-    ) / vol
+        performance - rf
+    ) / volatility_value
 
-def sortino(
-        return_pf,
+
+def sortino_ratio(
+        performance,
         returns,
-        rf=0.02):
+        rf):
 
     downside = returns[
         returns < 0
@@ -36,9 +40,13 @@ def sortino(
         * np.sqrt(12)
     )
 
+    if downside_vol == 0:
+        return 0
+
     return (
-        return_pf - rf
+        performance - rf
     ) / downside_vol
+
 
 def max_drawdown(returns):
 
@@ -46,41 +54,56 @@ def max_drawdown(returns):
         1 + returns
     ).cumprod()
 
-    running_max = (
-        cumulative.cummax()
-    )
+    peak = cumulative.cummax()
 
     dd = (
         cumulative
         /
-        running_max
+        peak
         - 1
     )
 
     return dd.min()
 
-def var_95(returns):
+
+def historical_var(
+        returns,
+        confidence=95):
+
+    percentile = (
+        100 - confidence
+    )
 
     return np.percentile(
         returns,
-        5
+        percentile
     )
 
-def cvar_95(returns):
 
-    var = np.percentile(
+def cvar(
         returns,
-        5
+        confidence=95):
+
+    var = historical_var(
+        returns,
+        confidence
     )
 
     return returns[
         returns <= var
     ].mean()
 
-def dv01(df):
 
-    return (
-        df["Valeur_Marchande"]
-        * df["Duration"]
-        * 0.0001
-    ).sum()
+def parametric_var(
+        returns,
+        confidence=95):
+
+    z = norm.ppf(
+        1 - confidence / 100
+    )
+
+    mu = returns.mean()
+
+    sigma = returns.std()
+
+    return mu + z * sigma
